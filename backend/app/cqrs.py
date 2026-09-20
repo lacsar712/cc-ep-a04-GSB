@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import EventStore, RunProjection
+from app.models import EventStore, MetricAlert, MetricThreshold, RunProjection
 
 
 TERMINAL_STATUSES = {"completed", "aborted"}
@@ -128,6 +128,65 @@ def _get_projection(db: Session, run_id: UUID) -> RunProjection | None:
     return db.get(RunProjection, run_id)
 
 
+def _violation_direction(threshold: MetricThreshold, value: float) -> str | None:
+    if threshold.lower_bound is not None and value < threshold.lower_bound:
+        return "below"
+    if threshold.upper_bound is not None and value > threshold.upper_bound:
+        return "above"
+    return None
+
+
+def _add_alert(
+    db: Session,
+    *,
+    run_id: UUID,
+    metric_name: str,
+    value: float,
+    step: int,
+    threshold: MetricThreshold,
+    direction: str,
+) -> MetricAlert:
+    alert = MetricAlert(
+        id=uuid4(),
+        run_id=run_id,
+        metric_name=metric_name,
+        value=value,
+        step=step,
+        lower_bound=threshold.lower_bound,
+        upper_bound=threshold.upper_bound,
+        direction=direction,
+        created_at=_now(),
+    )
+    db.add(alert)
+    return alert
+
+
+def _check_threshold_and_alert(
+    db: Session,
+    *,
+    run_id: UUID,
+    metric_name: str,
+    value: float,
+    step: int,
+) -> None:
+    threshold = db.scalar(
+        select(MetricThreshold).where(MetricThreshold.metric_name == metric_name)
+    )
+    if threshold is None:
+        return
+    direction = _violation_direction(threshold, value)
+    if direction:
+        _add_alert(
+            db,
+            run_id=run_id,
+            metric_name=metric_name,
+            value=value,
+            step=step,
+            threshold=threshold,
+            direction=direction,
+        )
+
+
 def _require_running(proj: RunProjection | None) -> RunProjection:
     if proj is None:
         raise DomainError("Run 不存在", status_code=404)
@@ -209,6 +268,7 @@ def record_metric(
         actor=actor,
     )
     proj = _apply_event_to_projection(proj, event)
+    _check_threshold_and_alert(db, run_id=run_id, metric_name=name, value=value, step=step)
     db.commit()
     db.refresh(proj)
     return proj
@@ -307,6 +367,103 @@ def list_events(db: Session, run_id: UUID) -> list[EventStore]:
         .order_by(EventStore.version.asc())
     )
     return list(db.scalars(stmt).all())
+
+
+def _regenerate_alerts_for_metric(
+    db: Session, metric_name: str, threshold: MetricThreshold
+) -> None:
+    """Alerts are a derived projection of (current thresholds x recorded metrics):
+    rebuild this metric's alerts from all run projections."""
+    db.execute(delete(MetricAlert).where(MetricAlert.metric_name == metric_name))
+    runs = db.scalars(select(RunProjection)).all()
+    for run in runs:
+        for entry in run.metrics_json or []:
+            if entry.get("name") != metric_name:
+                continue
+            direction = _violation_direction(threshold, entry["value"])
+            if direction:
+                _add_alert(
+                    db,
+                    run_id=run.id,
+                    metric_name=metric_name,
+                    value=entry["value"],
+                    step=entry["step"],
+                    threshold=threshold,
+                    direction=direction,
+                )
+
+
+def upsert_threshold(
+    db: Session,
+    *,
+    metric_name: str,
+    lower_bound: float | None,
+    upper_bound: float | None,
+    actor: str,
+) -> MetricThreshold:
+    if lower_bound is None and upper_bound is None:
+        raise DomainError("上下限至少填写一项")
+    if lower_bound is not None and upper_bound is not None and lower_bound > upper_bound:
+        raise DomainError("下限不能大于上限")
+
+    threshold = db.scalar(
+        select(MetricThreshold).where(MetricThreshold.metric_name == metric_name)
+    )
+    if threshold is None:
+        threshold = MetricThreshold(
+            id=uuid4(),
+            metric_name=metric_name,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+            updated_by=actor,
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        db.add(threshold)
+    else:
+        threshold.lower_bound = lower_bound
+        threshold.upper_bound = upper_bound
+        threshold.updated_by = actor
+        threshold.updated_at = _now()
+    db.flush()
+    _regenerate_alerts_for_metric(db, metric_name, threshold)
+    db.commit()
+    db.refresh(threshold)
+    return threshold
+
+
+def delete_threshold(db: Session, *, metric_name: str) -> None:
+    threshold = db.scalar(
+        select(MetricThreshold).where(MetricThreshold.metric_name == metric_name)
+    )
+    if threshold is None:
+        raise DomainError("阈值不存在", status_code=404)
+    db.delete(threshold)
+    db.execute(delete(MetricAlert).where(MetricAlert.metric_name == metric_name))
+    db.commit()
+
+
+def list_thresholds(db: Session) -> list[MetricThreshold]:
+    stmt = select(MetricThreshold).order_by(MetricThreshold.metric_name.asc())
+    return list(db.scalars(stmt).all())
+
+
+def list_alerts(
+    db: Session,
+    *,
+    run_id: UUID | None = None,
+    metric_name: str | None = None,
+) -> list[tuple[MetricAlert, RunProjection]]:
+    stmt = (
+        select(MetricAlert, RunProjection)
+        .join(RunProjection, MetricAlert.run_id == RunProjection.id)
+        .order_by(MetricAlert.created_at.desc())
+    )
+    if run_id is not None:
+        stmt = stmt.where(MetricAlert.run_id == run_id)
+    if metric_name:
+        stmt = stmt.where(MetricAlert.metric_name == metric_name)
+    return list(db.execute(stmt).all())
 
 
 def rebuild_projection_from_events(db: Session, run_id: UUID) -> RunProjection | None:

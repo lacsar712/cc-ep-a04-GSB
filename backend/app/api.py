@@ -11,14 +11,19 @@ from app.cqrs import (
     abort_run,
     attach_artifact,
     complete_run,
+    delete_threshold,
+    list_alerts,
     list_events,
+    list_thresholds,
     record_metric,
     start_run,
+    upsert_threshold,
 )
 from app.database import get_db
 from app.models import RunProjection
 from app.schemas import (
     AbortRunCommand,
+    AlertOut,
     AttachArtifactCommand,
     CompleteRunCommand,
     EventOut,
@@ -27,6 +32,8 @@ from app.schemas import (
     RecordMetricCommand,
     RunOut,
     StartRunCommand,
+    ThresholdOut,
+    ThresholdUpsertCommand,
     TokenResponse,
 )
 
@@ -224,3 +231,69 @@ def get_lineage(
         started_by=proj.started_by,
         version=proj.version,
     )
+
+
+@router.get("/thresholds", response_model=list[ThresholdOut])
+def get_thresholds(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    return list_thresholds(db)
+
+
+@router.put("/thresholds/{metric_name}", response_model=ThresholdOut)
+def put_threshold(
+    metric_name: str,
+    body: ThresholdUpsertCommand,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_researcher),
+):
+    try:
+        return upsert_threshold(
+            db,
+            metric_name=metric_name,
+            lower_bound=body.lower_bound,
+            upper_bound=body.upper_bound,
+            actor=user["username"],
+        )
+    except DomainError as exc:
+        _handle_domain(exc)
+
+
+@router.delete("/thresholds/{metric_name}", status_code=204)
+def remove_threshold(
+    metric_name: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_researcher),
+):
+    try:
+        delete_threshold(db, metric_name=metric_name)
+    except DomainError as exc:
+        _handle_domain(exc)
+
+
+@router.get("/alerts", response_model=list[AlertOut])
+def get_alerts(
+    run_id: UUID | None = Query(default=None),
+    metric_name: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    rows = list_alerts(db, run_id=run_id, metric_name=metric_name)
+    return [
+        AlertOut(
+            id=alert.id,
+            run_id=alert.run_id,
+            project=run.project,
+            run_name=run.name,
+            run_status=run.status,
+            metric_name=alert.metric_name,
+            value=alert.value,
+            step=alert.step,
+            lower_bound=alert.lower_bound,
+            upper_bound=alert.upper_bound,
+            direction=alert.direction,
+            created_at=alert.created_at,
+        )
+        for alert, run in rows
+    ]

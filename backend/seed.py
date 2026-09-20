@@ -1,4 +1,4 @@
-"""Seed demo runs: 2 completed + 1 running."""
+"""Seed demo runs: 2 completed + 1 running, plus demo metric thresholds."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from uuid import UUID
 
 from sqlalchemy import select, text
 
-from app.cqrs import attach_artifact, complete_run, record_metric, start_run
+from app.cqrs import attach_artifact, complete_run, record_metric, start_run, upsert_threshold
 from app.database import Base, SessionLocal, engine
 from app.models import RunProjection
 
@@ -145,7 +145,14 @@ def seed() -> None:
             expected_version=run3.version,
         )
 
-        print("Seed completed: 2 completed runs + 1 running run")
+        # Demo thresholds. loss=1.84 breaches its upper bound -> an alert is
+        # generated right away; tm_score stays in range until the upper bound
+        # is lowered from the thresholds page (acceptance demo path).
+        upsert_threshold(db, metric_name="tm_score", lower_bound=None, upper_bound=0.9, actor="researcher")
+        upsert_threshold(db, metric_name="loss", lower_bound=None, upper_bound=1.5, actor="researcher")
+        upsert_threshold(db, metric_name="hit_rate", lower_bound=0.1, upper_bound=None, actor="researcher")
+
+        print("Seed completed: 2 completed runs + 1 running run + 3 metric thresholds (loss alert fired)")
     finally:
         db.close()
 

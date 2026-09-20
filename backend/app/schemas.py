@@ -98,3 +98,35 @@ class LineageOut(BaseModel):
     finished_at: datetime | None
     started_by: str
     version: int
+
+
+class ThresholdUpsertCommand(BaseModel):
+    lower_bound: float | None = None
+    upper_bound: float | None = None
+
+
+class ThresholdOut(BaseModel):
+    id: UUID
+    metric_name: str
+    lower_bound: float | None
+    upper_bound: float | None
+    updated_by: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AlertOut(BaseModel):
+    id: UUID
+    run_id: UUID
+    project: str
+    run_name: str
+    run_status: str
+    metric_name: str
+    value: float
+    step: int
+    lower_bound: float | None
+    upper_bound: float | None
+    direction: str
+    created_at: datetime

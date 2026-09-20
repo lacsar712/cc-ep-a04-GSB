@@ -7,6 +7,8 @@
           <div class="nav-links">
             <router-link to="/runs">Run 列表</router-link>
             <router-link v-if="auth.role === 'researcher'" to="/runs/new">新建 Run</router-link>
+            <router-link to="/thresholds">阈值</router-link>
+            <router-link to="/alerts">告警</router-link>
             <span class="muted">{{ auth.username }}（{{ roleLabel }}）</span>
             <n-button size="small" quaternary @click="logout">退出</n-button>
           </div>
