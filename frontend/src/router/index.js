@@ -6,6 +6,8 @@ import RunCreateView from '../views/RunCreateView.vue'
 import RunDetailView from '../views/RunDetailView.vue'
 import EventTimelineView from '../views/EventTimelineView.vue'
 import LineageView from '../views/LineageView.vue'
+import ThresholdsView from '../views/ThresholdsView.vue'
+import AlertsView from '../views/AlertsView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -17,6 +19,8 @@ const router = createRouter({
     { path: '/runs/:id', name: 'run-detail', component: RunDetailView },
     { path: '/runs/:id/events', name: 'run-events', component: EventTimelineView },
     { path: '/runs/:id/lineage', name: 'run-lineage', component: LineageView },
+    { path: '/thresholds', name: 'thresholds', component: ThresholdsView },
+    { path: '/alerts', name: 'alerts', component: AlertsView },
   ],
 })
 

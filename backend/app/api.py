@@ -17,8 +17,15 @@ from app.cqrs import (
 )
 from app.database import get_db
 from app.models import RunProjection
+from app.monitoring import (
+    delete_threshold,
+    list_alerts,
+    list_thresholds,
+    upsert_threshold,
+)
 from app.schemas import (
     AbortRunCommand,
+    AlertOut,
     AttachArtifactCommand,
     CompleteRunCommand,
     EventOut,
@@ -27,6 +34,8 @@ from app.schemas import (
     RecordMetricCommand,
     RunOut,
     StartRunCommand,
+    ThresholdBoundsCommand,
+    ThresholdOut,
     TokenResponse,
 )
 
@@ -224,3 +233,51 @@ def get_lineage(
         started_by=proj.started_by,
         version=proj.version,
     )
+
+
+@router.get("/thresholds", response_model=list[ThresholdOut])
+def get_thresholds(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    return list_thresholds(db)
+
+
+@router.put("/thresholds/{metric_name}", response_model=ThresholdOut)
+def put_threshold(
+    metric_name: str,
+    body: ThresholdBoundsCommand,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_researcher),
+):
+    try:
+        return upsert_threshold(
+            db,
+            actor=user["username"],
+            metric_name=metric_name,
+            lower_bound=body.lower_bound,
+            upper_bound=body.upper_bound,
+        )
+    except DomainError as exc:
+        _handle_domain(exc)
+
+
+@router.delete("/thresholds/{metric_name}", status_code=204)
+def remove_threshold(
+    metric_name: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_researcher),
+):
+    try:
+        delete_threshold(db, metric_name=metric_name)
+    except DomainError as exc:
+        _handle_domain(exc)
+
+
+@router.get("/alerts", response_model=list[AlertOut])
+def get_alerts(
+    run_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
+    return list_alerts(db, run_id=run_id)

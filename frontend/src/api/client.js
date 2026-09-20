@@ -77,4 +77,23 @@ export async function getLineage(id) {
   return data
 }
 
+export async function listThresholds() {
+  const { data } = await api.get('/thresholds')
+  return data
+}
+
+export async function upsertThreshold(metricName, body) {
+  const { data } = await api.put(`/thresholds/${encodeURIComponent(metricName)}`, body)
+  return data
+}
+
+export async function deleteThreshold(metricName) {
+  await api.delete(`/thresholds/${encodeURIComponent(metricName)}`)
+}
+
+export async function listAlerts(params = {}) {
+  const { data } = await api.get('/alerts', { params })
+  return data
+}
+
 export default api

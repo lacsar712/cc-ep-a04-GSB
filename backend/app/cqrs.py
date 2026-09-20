@@ -8,22 +8,25 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.errors import ConflictError, DomainError
 from app.models import EventStore, RunProjection
+from app.monitoring import check_metric_against_thresholds
+
+__all__ = [
+    "ConflictError",
+    "DomainError",
+    "TERMINAL_STATUSES",
+    "start_run",
+    "record_metric",
+    "attach_artifact",
+    "complete_run",
+    "abort_run",
+    "list_events",
+    "rebuild_projection_from_events",
+]
 
 
 TERMINAL_STATUSES = {"completed", "aborted"}
-
-
-class DomainError(Exception):
-    def __init__(self, message: str, status_code: int = 400):
-        self.message = message
-        self.status_code = status_code
-        super().__init__(message)
-
-
-class ConflictError(DomainError):
-    def __init__(self, message: str = "版本冲突或终态不可变更"):
-        super().__init__(message, status_code=409)
 
 
 def _now() -> datetime:
@@ -209,6 +212,9 @@ def record_metric(
         actor=actor,
     )
     proj = _apply_event_to_projection(proj, event)
+    check_metric_against_thresholds(
+        db, run_id=run_id, actor=actor, name=name, value=value, step=step
+    )
     db.commit()
     db.refresh(proj)
     return proj
